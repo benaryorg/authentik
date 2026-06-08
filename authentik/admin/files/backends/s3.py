@@ -157,13 +157,6 @@ class S3Backend(ManageableBackend):
                 "Key": f"{self.base_path}/{name}",
             }
 
-            url = self.client.generate_presigned_url(
-                "get_object",
-                Params=params,
-                ExpiresIn=expires_in,
-                HttpMethod="GET",
-            )
-
             # Support custom domain for S3-compatible storage (so not AWS)
             # Well, can't you do custom domains on AWS as well?
             custom_domain = CONFIG.get(
@@ -171,24 +164,25 @@ class S3Backend(ManageableBackend):
                 CONFIG.get(f"storage.{self.name}.custom_domain", None),
             )
             if custom_domain:
-                parsed = urlsplit(url)
-                scheme = "https" if use_https else "http"
-                path = parsed.path
+                custom_url = f"{"https" if use_https else "http"}//{self.custom_domain}/{name}"
+                request = AWSRequest("GET", custom_url)
+                self.client._request_signer.sign(
+                    "GetObject",
+                    request,
+                    signing_type="presign-url",
+                    expires_in=expires_in,
+                )
+                prepared_request = request.prepare()
+                url = prepared_request.url
 
-                # When using path-style addressing, the presigned URL contains the bucket
-                # name in the path (e.g., /bucket-name/key). Since custom_domain must
-                # include the bucket name (per docs), strip it from the path to avoid
-                # duplication. See: https://github.com/goauthentik/authentik/issues/19521
-                # Check with trailing slash to ensure exact bucket name match
-                if path.startswith(f"/{self.bucket_name}/"):
-                    path = path.removeprefix(f"/{self.bucket_name}")
+            else:
+                url = self.client.generate_presigned_url(
+                    "get_object",
+                    Params=params,
+                    ExpiresIn=expires_in,
+                    HttpMethod="GET",
+                )
 
-                # Normalize to avoid double slashes
-                custom_domain = custom_domain.rstrip("/")
-                if not path.startswith("/"):
-                    path = f"/{path}"
-
-                url = f"{scheme}://{custom_domain}{path}?{parsed.query}"
 
             return url
 
